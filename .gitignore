@@ -1,0 +1,12 @@
+.DS_store
+cookie.json
+node_modules
+config.js
+*.log
+qrcode.png
+.vscode
+config.go.json
+test.js
+coverage
+screenshot*
+*.exe
