@@ -48,7 +48,7 @@ async function loadCookie() {
 		});
 		return json;
 	} catch (e) {
-		console.log(e);
+		console.log('正常报错', e.message);
 		console.log('没有读取到cookie, 重新登陆');
 	}
 	return null;
@@ -94,16 +94,107 @@ async function getCourses() {
 			while ((match = regex.exec(onclickStr))) {
 				matches.push(match[1]);
 			}
+			const regPecent = /(\d+)\/\d+/;
+			const processText = await i.$eval(
+				'.course-progress-name',
+				node => node.innerText
+			);
+			const process = parseInt(processText.match(regPecent)?.[1] || 0);
+			if (process == 100) {
+				return null;
+			}
 			return {
 				name: await i.$eval('.course-name', node => node.innerText),
-				process: await i.$eval('.course-progress-name', node => node.innerText),
+				process,
 				args: await matches.slice(1, 4)
 			};
 		})
 	);
 	await page.close();
 	// ignore that's done
-	return allCourse;
+	return allCourse.filter(Boolean);
+}
+
+async function recordTime(params) {
+	const beginParams = {
+		headers: {
+			'Device-Trace-Id-QS': params.traceId,
+			'User-Agent': params.ua,
+			Cookie: params.cookie,
+			'Content-Type': 'application/json',
+			Referer: params.referer
+		},
+		method: 'POST',
+		body: JSON.stringify({
+			classId: params.teachPlanId,
+			contentId: params.contentId,
+			contentType: 11,
+			courseId: params.courseId,
+			detectId: null,
+			periodId: params.periodId,
+			position: params.positionStart
+		})
+	};
+	const res = await fetch(
+		`https://degree.qingshuxuetang.com/njupt/Student/Course/UploadStudyRecordBegin?_t=${Date.now()}`,
+		beginParams
+	).then(r => {
+		const json = r.json();
+		return json;
+	});
+
+	await new Promise(r => {
+		setTimeout(r, 60 * 1000);
+	});
+	let start = params.positionStart;
+	const duration = params.positionEnd;
+
+	const loop = async () => {
+		const formData = new FormData();
+		formData.append('recordId', res.data);
+		formData.append('end', start >= duration);
+		formData.append('position', Math.min(start, duration));
+		formData.append('timeOutConfirm', false);
+
+		await fetch(
+			`https://degree.qingshuxuetang.com/njupt/Student/Course/UploadStudyRecordContinue?_t=${Date.now()}`,
+			{
+				headers: {
+					'Device-Trace-Id-QS': params.traceId,
+					'User-Agent': params.ua,
+					Cookie: params.cookie,
+
+					// 'Content-Type': 'Application/json',
+					Referer: params.referer
+				},
+				method: 'POST',
+				body: formData
+			}
+		)
+			.then(async r => {
+				if (r.status == 401) {
+					console.log('登陆失效请重新启动');
+					process.exit(0);
+				}
+				const res = await r.json();
+				if (res.data != null) {
+					console.log(r.message);
+				} else {
+					console.log(`增加时间:+1m`);
+				}
+			})
+			.catch(e => {
+				console.log('正常报错', e.message);
+			});
+		if (start < duration) {
+			start += 1 * 60;
+			await new Promise(r => {
+				setTimeout(r, 60 * 1000);
+			});
+			return loop();
+		}
+	};
+	await loop();
 }
 
 async function runTask(course) {
@@ -164,109 +255,53 @@ async function runTask(course) {
 					}
 				)
 				.catch(e => {
-					console.log(e);
-					console.log('课件, 没有视频');
+					console.log('正常报错', e.message);
+					console.log('课件文档, 没有视频');
 				})
 		]);
 
 		// const contentInfo = videoPage.evalueHandle(() => {});
 		const duration = Math.floor(
-			await videoPage.$eval(
-				'#vjs_video_3_html5_api',
-				node => node?.duration || 60 * 10
-			)
+			await videoPage
+				.$eval('#vjs_video_3_html5_api', node => node?.duration || 60 * 10)
+				.catch(e => {
+					return 60 * 10;
+				})
 		);
-		let start = 90;
+
 		const traceId = await page.evaluate(() => {
 			return localStorage.getItem('Device-Trace-Id-QS');
 		});
-		const beginParams = {
-			headers: {
-				'Device-Trace-Id-QS': traceId,
-				'User-Agent': context.UA,
-				Cookie: context.cookie
-					.map(i => {
-						return `${i.name}=${i.value}`;
-					})
-					.join(';'),
-				'Content-Type': 'application/json',
-				Referer:
-					'https://degree.qingshuxuetang.com/njupt/Student/Course/CourseShow' +
-					`?${search}`
-			},
-			method: 'POST',
-			body: JSON.stringify({
-				classId: param.teachPlanId,
-				contentId: id,
-				contentType: 11,
-				courseId: param.courseId,
-				detectId: null,
-				periodId: param.periodId,
-				position: start
+		let concurrent = 5;
+
+		cookie = context.cookie
+			.map(i => {
+				return `${i.name}=${i.value}`;
 			})
-		};
-		const res = await fetch(
-			`https://degree.qingshuxuetang.com/njupt/Student/Course/UploadStudyRecordBegin?_t=${Date.now()}`,
-			beginParams
-		).then(r => {
-			const json = r.json();
-			return json;
-		});
-		await new Promise(r => {
-			setTimeout(r, 51 * 1000);
-		});
-		const logId = res.data;
-		const loop = async () => {
-			console.log('开始增加时间:+2.5m');
-			const formData = new FormData();
-			formData.append('recordId', logId);
-			formData.append('end', start >= duration);
-			formData.append('position', start);
-			formData.append('timeOutConfirm', false);
-			return await fetch(
-				`https://degree.qingshuxuetang.com/njupt/Student/Course/UploadStudyRecordContinue?_t=${Date.now()}`,
-				{
-					headers: {
-						'Device-Trace-Id-QS': traceId,
-						'User-Agent': context.UA,
-						Cookie: context.cookie
-							.map(i => {
-								return `${i.name}=${i.value}`;
-							})
-							.join(';'),
-						// 'Content-Type': 'Application/json',
-						Referer:
-							'https://degree.qingshuxuetang.com/njupt/Student/Course/CourseShow' +
-							`?${search}`
-					},
-					method: 'POST',
-					body: formData
-				}
-			)
-				.then(async r => {
-					if (r.status == 401) {
-						console.log('登陆失效请重新启动');
-						process.exit(0);
-					}
-					const res = await r.json();
-					if (res.data != null) {
-						console.log(r.message);
-					}
-					return await new Promise(r => {
-						setTimeout(r, 51 * 1000);
-					});
+			.join(';');
+		const promies = [];
+		for (let i = 0; i < concurrent; i++) {
+			promies.push(
+				recordTime({
+					traceId,
+					ua: context.UA,
+					cookie: cookie,
+					referer:
+						'https://degree.qingshuxuetang.com/njupt/Student/Course/CourseShow' +
+						`?${search}`,
+					classId: param.teachPlanId,
+					teachPlanId: param.teachPlanId,
+					contentId: id,
+					contentType: 11,
+					courseId: param.courseId,
+					periodId: param.periodId,
+					positionStart: Math.floor(duration / concurrent) * i,
+					positionEnd: Math.floor(duration / concurrent) * (i + 1)
 				})
-				.catch(e => {
-					console.log(e);
-				})
-				.finally(() => {
-					if (start < duration) {
-						start += 2.5 * 60;
-						return loop();
-					}
-				});
-		};
-		await loop();
+			);
+			await new Promise(r => setTimeout(r, 2000));
+		}
+		await Promise.allSettled(promies);
 	}
 }
 async function Run() {
