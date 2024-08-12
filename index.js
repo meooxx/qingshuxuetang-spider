@@ -224,13 +224,24 @@ async function runTask(course) {
 	const curriculars$ = await page.$('#list');
 	const list = await curriculars$.$$eval('a', a =>
 		a.map(node => {
+			const timesText =
+				node.querySelector('.mark.study_being')?.innerText || '';
+			const regex = /\s(\d+)次/;
+			const match = timesText.match(regex);
+			let times = 0;
+			if (match) {
+				times = match[1];
+			}
+			const name = node.querySelector('.title')?.innerText || '';
 			return {
 				id: node.getAttribute('id'),
-				name: node.querySelector('.title')?.innerText || ''
+				name: name,
+				times: times
 			};
 		})
 	);
 	const validIds = list
+		.filter(i => i && i.times < 3)
 		.filter(i => i && Boolean(i.id))
 		.map(i => {
 			return { ...i, id: i.id.split('-')[1] };
@@ -251,7 +262,7 @@ async function runTask(course) {
 						return headers['content-type'] === 'video/mp4';
 					},
 					{
-						timeout: 3000
+						timeout: 5000
 					}
 				)
 				.catch(e => {
@@ -273,7 +284,7 @@ async function runTask(course) {
 			return localStorage.getItem('Device-Trace-Id-QS');
 		});
 		let concurrent = 5;
-
+		concurrent -= Math.round(Math.random() * 2);
 		cookie = context.cookie
 			.map(i => {
 				return `${i.name}=${i.value}`;
